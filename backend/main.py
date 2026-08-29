@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,7 +12,7 @@ from app.core.rag_engine import init_rag_engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
+client_url = os.getenv("CLIENT_URL", "http://localhost:5173")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize shared resources on startup."""
@@ -26,7 +27,7 @@ app = FastAPI(title=settings.service_name, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[client_url],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
