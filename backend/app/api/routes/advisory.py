@@ -1,11 +1,15 @@
 from fastapi import APIRouter
 from app.schemas.advisory import AdvisoryRequest, AdvisoryResponse
 from app.services.advisory import AdvisoryService
-import os
+from app.core.rag_engine import get_rag_engine
 
 router = APIRouter()
-advisory_service = AdvisoryService(api_key=os.getenv("GROQ_API_KEY"))
+
+
+def _get_service() -> AdvisoryService:
+    return AdvisoryService(engine=get_rag_engine())
+
 
 @router.post("/analyze", response_model=AdvisoryResponse)
 def analyze_business(request: AdvisoryRequest):
-    return advisory_service.analyze(request)
+    return _get_service().analyze(request)

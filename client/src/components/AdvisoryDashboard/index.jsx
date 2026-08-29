@@ -80,7 +80,7 @@ export default function AdvisoryDashboard() {
           <SwotCell
             key={cfg.key}
             config={cfg}
-            items={advisoryData.swot_analysis?.[cfg.key]}
+            items={advisoryData.swot_analysis?.[cfg.key.toLowerCase()]}
             delay={i * 60}
           />
         ))}

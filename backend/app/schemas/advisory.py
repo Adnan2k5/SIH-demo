@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, Field
 
 class AdvisoryRequest(BaseModel):
@@ -7,8 +8,17 @@ class AdvisoryRequest(BaseModel):
     unique_selling_proposition: str = Field(..., description="USP of the business")
 
 class AdvisoryResponse(BaseModel):
-    market_reach: str
-    opportunities: list[str]
-    swot_analysis: dict[str, list[str]]
-    pricing_strategy: str
-    competitor_analysis: str
+    market_reach: str = Field(default="", description="Estimated potential customer base")
+    opportunities: list[str] = Field(default_factory=list, description="Growth opportunities")
+    swot_analysis: Optional[dict[str, list[str]]] = Field(
+        default=None,
+        description="SWOT analysis with keys: strengths, weaknesses, opportunities, threats",
+    )
+    pricing_strategy: Optional[str] = Field(
+        default=None,
+        description="Recommended pricing approach with justification",
+    )
+    competitor_analysis: Optional[str] = Field(
+        default=None,
+        description="Key competitors and differentiation tactics",
+    )
