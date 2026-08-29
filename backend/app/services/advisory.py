@@ -1,22 +1,60 @@
+import os
 from typing import Dict, List
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_community.document_loaders import TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_core.runnables import RunnablePassthrough
 from app.schemas.advisory import AdvisoryRequest, AdvisoryResponse
 
 class AdvisoryService:
     def __init__(self, api_key: str = None):
-        self.llm = ChatOpenAI(temperature=0.7, model="gpt-4o-mini", api_key=api_key) if api_key else None
+        self.api_key = api_key
+        self.llm = ChatGroq(temperature=0.7, model_name="mixtral-8x7b-32768", api_key=api_key) if api_key else None
+        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         self.parser = JsonOutputParser(pydantic_object=AdvisoryResponse)
+        
         self.prompt = PromptTemplate(
-            template="Analyze the following business and provide a response in JSON format matching the schema.\n{format_instructions}\n\nBusiness Type: {business_type}\nLocation: {location}\nTarget Audience: {target_audience}\nUSP: {unique_selling_proposition}\n",
-            input_variables=["business_type", "location", "target_audience", "unique_selling_proposition"],
+            template="You are a business advisory engine. Use the retrieved context to analyze the business and provide a response in JSON format matching the schema.\n{format_instructions}\n\nContext:\n{context}\n\nBusiness Type: {business_type}\nLocation: {location}\nTarget Audience: {target_audience}\nUSP: {unique_selling_proposition}\n",
+            input_variables=["context", "business_type", "location", "target_audience", "unique_selling_proposition"],
             partial_variables={"format_instructions": self.parser.get_format_instructions()},
         )
-        if self.llm:
-            self.chain = self.prompt | self.llm | self.parser
+        
+        self.vector_store = None
+        self.retriever = None
+        
+        if self.api_key:
+            self._initialize_rag()
+            self.chain = (
+                RunnablePassthrough.assign(
+                    context=lambda x: self._format_docs(self.retriever.invoke(x["business_type"] + " " + x["location"]))
+                )
+                | self.prompt
+                | self.llm
+                | self.parser
+            )
         else:
             self.chain = None
+
+    def _initialize_rag(self):
+        kb_path = "backend/data/knowledge_base.txt"
+        os.makedirs(os.path.dirname(kb_path), exist_ok=True)
+        if not os.path.exists(kb_path):
+            with open(kb_path, "w") as f:
+                f.write("Market dynamics: Startups in rural areas benefit from MUDRA loans. Urban tech companies see 20% YoY growth. Manufacturing sector requires strong supply chain USPs.\n")
+                
+        loader = TextLoader(kb_path)
+        docs = loader.load()
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        splits = text_splitter.split_documents(docs)
+        self.vector_store = Chroma.from_documents(documents=splits, embedding=self.embeddings)
+        self.retriever = self.vector_store.as_retriever()
+
+    def _format_docs(self, docs):
+        return "\n\n".join(doc.page_content for doc in docs)
 
     def analyze(self, request: AdvisoryRequest) -> AdvisoryResponse:
         if not self.chain:
