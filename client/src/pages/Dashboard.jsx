@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import useAppStore from '../store/useAppStore'
 import AIAdvisory from './AIAdvisory'
+import SchemeExplorer from './SchemeExplorer'
+import ProfileSettings from './ProfileSettings'
 
 /* ── Sidebar nav items ───────────────────────────────────────── */
 const NAV_ITEMS = [
@@ -211,11 +213,32 @@ function PlaceholderPage({ title, icon }) {
 /* ── Root Layout ───────────────────────────────────────────── */
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { advisoryData, businessForm } = useAppStore()
+  const { advisoryData, businessForm, profileForm } = useAppStore()
   const [activePage, setActivePage] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [profileOpen, setProfileOpen] = useState(false)
+  const profileRef = useRef(null)
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (profileRef.current && !profileRef.current.contains(e.target)) {
+        setProfileOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const handleNav = (page) => setActivePage(page)
+
+  const handleSearch = (e) => {
+    if (e.key === 'Enter' && e.target.value.trim()) {
+      setActivePage('schemes')
+    }
+    setSearchQuery(e.target.value)
+  }
 
   const renderPage = () => {
     switch (activePage) {
@@ -229,12 +252,12 @@ export default function Dashboard() {
             <button className="dash-btn-primary" style={{marginTop:'1.25rem'}} onClick={() => navigate('/wizard')}>Start Analysis →</button>
           </div>
         )
-      case 'schemes':   return <PlaceholderPage title="Scheme Explorer" icon="📋" />
+      case 'schemes':   return <SchemeExplorer />
       case 'finance':   return <PlaceholderPage title="Finance Planner" icon="📊" />
       case 'insights':  return <PlaceholderPage title="Business Insights" icon="📈" />
       case 'documents': return <PlaceholderPage title="Documents" icon="📁" />
       case 'reports':   return <PlaceholderPage title="Reports" icon="📑" />
-      case 'settings':  return <PlaceholderPage title="Settings" icon="⚙️" />
+      case 'settings':  return <ProfileSettings />
       default:          return <DashboardHome businessForm={businessForm} advisoryData={advisoryData} onNavigate={handleNav} />
     }
   }
@@ -260,12 +283,19 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="dash-topbar-search">
+        <div className="dash-topbar-search" onClick={() => { setActivePage('schemes'); }} style={{ cursor: 'pointer' }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8"/>
             <path d="m21 21-4.35-4.35"/>
           </svg>
-          <input id="dash-search-input" placeholder="Search schemes, business ideas, or ask GRAMAI..." />
+          <input
+            id="dash-search-input"
+            placeholder="Search schemes, business ideas, or ask GRAMAI..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={handleSearch}
+            onClick={e => e.stopPropagation()}
+          />
         </div>
 
         <div className="dash-topbar-right">
@@ -282,12 +312,110 @@ export default function Dashboard() {
             </svg>
             <div className="dash-notif-dot" />
           </div>
-          <div className="dash-avatar">
-            <div className="dash-avatar-img">RE</div>
-            <div className="dash-avatar-info">
-              <div className="dash-avatar-name">{businessForm.business_type || 'Rural Entrepreneur'}</div>
-              <div className="dash-avatar-loc">{businessForm.location || 'Vaddeswaram, AP'}</div>
+          {/* ── Profile Dropdown ── */}
+          <div className="dash-profile-wrap" ref={profileRef}>
+            <div
+              className={`dash-avatar ${profileOpen ? 'dash-avatar--active' : ''}`}
+              onClick={() => setProfileOpen(v => !v)}
+              id="dash-profile-trigger"
+              style={{ cursor: 'pointer' }}
+            >
+              <div className="dash-avatar-img">
+                {profileForm.owner_name
+                  ? profileForm.owner_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+                  : 'RE'}
+              </div>
+              <div className="dash-avatar-info">
+                <div className="dash-avatar-name">{profileForm.owner_name || businessForm.business_type || 'Rural Entrepreneur'}</div>
+                <div className="dash-avatar-loc">{profileForm.email || businessForm.location || 'Vaddeswaram, AP'}</div>
+              </div>
+              <svg className="dash-avatar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: profileOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
             </div>
+
+            {profileOpen && (
+              <div className="dash-profile-dropdown" id="dash-profile-dropdown">
+                {/* Card top */}
+                <div className="dash-pd-header">
+                  <div className="dash-pd-avatar">
+                    {profileForm.owner_name
+                      ? profileForm.owner_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+                      : 'RE'}
+                  </div>
+                  <div className="dash-pd-info">
+                    <div className="dash-pd-name">{profileForm.owner_name || 'Rural Entrepreneur'}</div>
+                    {profileForm.email && <div className="dash-pd-email">{profileForm.email}</div>}
+                    {profileForm.phone && <div className="dash-pd-phone">📞 {profileForm.phone}</div>}
+                  </div>
+                </div>
+
+                {/* Detail rows */}
+                <div className="dash-pd-rows">
+                  {businessForm.business_type && (
+                    <div className="dash-pd-row">
+                      <span className="dash-pd-row-icon">🏪</span>
+                      <span className="dash-pd-row-text">{businessForm.business_type}</span>
+                    </div>
+                  )}
+                  {(businessForm.location || profileForm.district || profileForm.state) && (
+                    <div className="dash-pd-row">
+                      <span className="dash-pd-row-icon">📍</span>
+                      <span className="dash-pd-row-text">
+                        {[businessForm.location, profileForm.district, profileForm.state].filter(Boolean).join(', ')}
+                      </span>
+                    </div>
+                  )}
+                  {profileForm.social_category && (
+                    <div className="dash-pd-row">
+                      <span className="dash-pd-row-icon">🏷️</span>
+                      <span className="dash-pd-row-text">{profileForm.social_category} category</span>
+                    </div>
+                  )}
+                  {profileForm.udyam_registered && (
+                    <div className="dash-pd-row">
+                      <span className="dash-pd-row-icon">✅</span>
+                      <span className="dash-pd-row-text">Udyam Registered</span>
+                    </div>
+                  )}
+                  {profileForm.dpiit_recognised && (
+                    <div className="dash-pd-row">
+                      <span className="dash-pd-row-icon">🚀</span>
+                      <span className="dash-pd-row-text">DPIIT Recognised Startup</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="dash-pd-actions">
+                  <button
+                    className="dash-pd-action-btn"
+                    id="dash-pd-settings"
+                    onClick={() => { setActivePage('settings'); setProfileOpen(false) }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
+                    </svg>
+                    Profile &amp; Settings
+                  </button>
+                  <button
+                    className="dash-pd-action-btn dash-pd-action-btn--danger"
+                    id="dash-pd-logout"
+                    onClick={() => {
+                      setProfileOpen(false)
+                      navigate('/')
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                      <polyline points="16 17 21 12 16 7" />
+                      <line x1="21" y1="12" x2="9" y2="12" />
+                    </svg>
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -316,15 +444,7 @@ export default function Dashboard() {
             ))}
           </nav>
 
-          {sidebarOpen && (
-            <div className="dash-sidebar-help">
-              <div className="dash-help-avatar">🤖</div>
-              <div>
-                <div className="dash-help-title">Need Help?</div>
-                <div className="dash-help-sub">Talk to GRAMAI AI</div>
-              </div>
-            </div>
-          )}
+
         </aside>
 
         {/* ── Content ── */}
