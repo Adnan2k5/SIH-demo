@@ -8,7 +8,11 @@ the given request parameters (project cost, category, social
 category, gender). Returns the same SchemeResponse schema.
 """
 
+import json
 import logging
+import re
+import time
+from fastapi import HTTPException
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.runnables import RunnablePassthrough
@@ -74,25 +78,52 @@ class SchemeService:
         docs = self._retriever.invoke(query)
         return "\n\n".join(doc.page_content for doc in docs)
 
-    def _parse_with_retry(self, inputs: dict, max_retries: int = 2) -> dict:
-        """Invoke LLM and parse JSON; retry up to max_retries times on failure."""
-        last_exc = None
-        for attempt in range(1, max_retries + 2):
+    def _extract_json(self, text: str) -> dict | None:
+        """Try multiple strategies to extract a JSON object from LLM output."""
+        text = text.strip()
+        if not text:
+            return None
+        # Strategy 1: direct parse
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Strategy 2: strip markdown code fences
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if fenced:
+            try:
+                return json.loads(fenced.group(1))
+            except json.JSONDecodeError:
+                pass
+        # Strategy 3: first {...} block
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    def _parse_with_retry(self, inputs: dict, max_retries: int = 3) -> dict:
+        """Invoke LLM and parse JSON; retry up to max_retries times on empty/invalid output."""
+        last_exc: Exception = ValueError("LLM never responded")
+        for attempt in range(1, max_retries + 1):
             raw = self._llm_chain.invoke(inputs)
             text = raw.content if hasattr(raw, "content") else str(raw)
             logger.debug("Scheme LLM raw output (attempt %d): %r", attempt, text[:500])
             if not text.strip():
                 logger.warning("Scheme LLM returned empty response on attempt %d", attempt)
                 last_exc = ValueError("LLM returned empty response")
+                time.sleep(2)
                 continue
-            try:
-                return self._parser.parse(text)
-            except Exception as exc:
-                logger.warning(
-                    "Scheme JSON parse failed on attempt %d: %s | raw=%r",
-                    attempt, exc, text[:300],
-                )
-                last_exc = exc
+            result = self._extract_json(text)
+            if result is not None:
+                return result
+            logger.warning(
+                "Scheme JSON parse failed on attempt %d | raw=%r", attempt, text[:300]
+            )
+            last_exc = ValueError(f"Could not parse JSON from LLM output: {text[:200]}")
+            time.sleep(2)
         raise last_exc
 
     def route(self, request: SchemeRequest) -> SchemeResponse:
@@ -109,5 +140,12 @@ class SchemeService:
             "social_category": request.social_category or "General",
             "gender": request.gender or "Not specified",
         }
-        result = self._parse_with_retry(inputs)
+        try:
+            result = self._parse_with_retry(inputs)
+        except Exception as exc:
+            logger.error("Scheme failed after all retries: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Scheme service temporarily unavailable — LLM rate limit exceeded. Please retry in a moment.",
+            ) from exc
         return SchemeResponse(**result)

@@ -12,7 +12,7 @@ class SchemeDetails(BaseModel):
     type: str
     max_loan_amount: float
     subsidy_percentage: float
-    description: str
+    description: Optional[str] = ""
 
 class SchemeResponse(BaseModel):
     recommended_scheme: SchemeDetails

@@ -7,7 +7,12 @@ context from the advisory knowledge base. No pre-computed
 results are returned.
 """
 
+import json
 import logging
+import re
+import time
+
+from fastapi import HTTPException
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.runnables import RunnablePassthrough
@@ -56,13 +61,13 @@ class AdvisoryService:
             partial_variables={"format_instructions": self._parser.get_format_instructions()},
         )
 
-        self._chain = (
+        # Keep LLM separate from parser so we can inspect raw text and retry
+        self._llm_chain = (
             RunnablePassthrough.assign(
                 context=lambda x: self._retrieve_context(x)
             )
             | self._prompt
             | self._llm
-            | self._parser
         )
 
     def _retrieve_context(self, inputs: dict) -> str:
@@ -73,16 +78,77 @@ class AdvisoryService:
         docs = self._retriever.invoke(query)
         return "\n\n".join(doc.page_content for doc in docs)
 
+    def _extract_json(self, text: str) -> dict | None:
+        """Try multiple strategies to extract a JSON object from the LLM output."""
+        text = text.strip()
+        if not text:
+            return None
+        # Strategy 1: direct parse
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Strategy 2: strip markdown code fences
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if fenced:
+            try:
+                return json.loads(fenced.group(1))
+            except json.JSONDecodeError:
+                pass
+        # Strategy 3: first {...} block
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    def _parse_with_retry(self, inputs: dict, max_retries: int = 3) -> dict:
+        """Invoke LLM and parse JSON; retry up to max_retries times on empty/invalid output."""
+        last_exc: Exception = ValueError("LLM never responded")
+        for attempt in range(1, max_retries + 1):
+            raw = self._llm_chain.invoke(inputs)
+            text = raw.content if hasattr(raw, "content") else str(raw)
+            logger.debug("Advisory LLM raw output (attempt %d): %r", attempt, text[:500])
+
+            if not text.strip():
+                logger.warning("Advisory LLM returned empty response on attempt %d", attempt)
+                last_exc = ValueError("LLM returned empty response")
+                time.sleep(2)
+                continue
+
+            result = self._extract_json(text)
+            if result is not None:
+                return result
+
+            logger.warning(
+                "Advisory JSON parse failed on attempt %d | raw=%r", attempt, text[:300]
+            )
+            last_exc = ValueError(f"Could not parse JSON from LLM output: {text[:200]}")
+            time.sleep(2)
+
+        raise last_exc
+
     def analyze(self, request: AdvisoryRequest) -> AdvisoryResponse:
         logger.info(
             "Advisory RAG: analyzing business_type=%s location=%s",
             request.business_type,
             request.location,
         )
-        result = self._chain.invoke({
+        inputs = {
             "business_type": request.business_type,
             "location": request.location,
             "target_audience": request.target_audience,
             "unique_selling_proposition": request.unique_selling_proposition,
-        })
+        }
+        try:
+            result = self._parse_with_retry(inputs)
+        except Exception as exc:
+            logger.error("Advisory failed after all retries: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Advisory service temporarily unavailable — LLM rate limit exceeded. Please retry in a moment.",
+            ) from exc
+
         return AdvisoryResponse(**result)
